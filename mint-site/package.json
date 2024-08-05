@@ -9,6 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@dynamic-labs/ethereum": "3.0.0-alpha.34",
+    "@dynamic-labs/sdk-react-core": "3.0.0-alpha.34",
     "next": "14.2.5",
     "react": "^18",
     "react-dom": "^18",

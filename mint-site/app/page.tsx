@@ -1,15 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { createWalletClient, custom, encodeFunctionData, Hash, Address, defineChain, Chain, createPublicClient, http } from 'viem';
+import React, {CSSProperties, useState} from 'react';
+import {  encodeFunctionData, Hash, defineChain, Chain } from 'viem';
 import { eip712WalletActions, getGeneralPaymasterInput, chainConfig } from 'viem/zksync';
 import contractABI from './abi/SampleNFT.json';
+import {DynamicWidget, useDynamicContext} from "@dynamic-labs/sdk-react-core";
 
-declare global {
-  interface Window {
-    ethereum?: any;
-  }
-}
 
 const NFT_CONTRACT_ADDRESS = "0xC4822AbB9F05646A9Ce44EFa6dDcda0Bf45595AA";
 const PAYMASTER_ADDRESS = "0xa8dA6C5bf7dA8c2D5A642D3dcc0E04D68D134806";
@@ -34,107 +30,15 @@ const abstract: Chain = defineChain({
   testnet: true,
 });
 
-const publicClient = createPublicClient({
-  chain: abstract,
-  transport: http()
-});
 
 export default function Home() {
-  const [account, setAccount] = useState<Address | null>(null);
-  const [walletClient, setWalletClient] = useState<any>(null);
-  const [isCorrectNetwork, setIsCorrectNetwork] = useState(false);
   const [isTransactionPending, setIsTransactionPending] = useState(false);
   const [transactionHash, setTransactionHash] = useState<Hash | null>(null);
 
-  const checkNetwork = async () => {
-    if (window.ethereum) {
-      const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-      const correct = parseInt(chainId) === abstract.id;
-      setIsCorrectNetwork(correct);
-      return correct;
-    }
-    return false;
-  };
-
-  const switchNetwork = async () => {
-    if (window.ethereum) {
-      try {
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: `0x${abstract.id.toString(16)}` }],
-        });
-        return await checkNetwork();
-      } catch (switchError: any) {
-        if (switchError.code === 4902) {
-          try {
-            await window.ethereum.request({
-              method: 'wallet_addEthereumChain',
-              params: [
-                {
-                  chainId: `0x${abstract.id.toString(16)}`,
-                  chainName: abstract.name,
-                  nativeCurrency: abstract.nativeCurrency,
-                  rpcUrls: [abstract.rpcUrls.default.http[0]],
-                },
-              ],
-            });
-            return await checkNetwork();
-          } catch (addError) {
-            console.error('Failed to add the network:', addError);
-          }
-        } else {
-          console.error('Failed to switch network:', switchError);
-        }
-      }
-    }
-    return false;
-  };
-
-  useEffect(() => {
-    if (typeof window.ethereum !== 'undefined') {
-      const client = createWalletClient({
-        chain: abstract,
-        transport: custom(window.ethereum)
-      }).extend(eip712WalletActions());
-      setWalletClient(client);
-      
-      window.ethereum.request({ method: 'eth_requestAccounts' })
-        .then((accounts: string[]) => {
-          setAccount(accounts[0] as Address);
-          checkNetwork();
-        })
-        .catch((error: any) => {
-          console.error("User denied account access", error);
-        });
-
-      window.ethereum.on('accountsChanged', (accounts: string[]) => {
-        setAccount(accounts[0] as Address);
-        checkNetwork();
-      });
-
-      window.ethereum.on('chainChanged', () => {
-        checkNetwork();
-      });
-    }
-  }, []);
+  const { primaryWallet } = useDynamicContext();
 
   const handleClick = async () => {
-    if (!walletClient || !account) {
-      alert('Please connect your wallet first');
-      return;
-    }
-
     if (isTransactionPending) return;
-
-    let networkCorrect = await checkNetwork();
-    if (!networkCorrect) {
-      networkCorrect = await switchNetwork();
-      if (!networkCorrect) {
-        alert('Please switch to the Abstract Testnet to mint.');
-        return;
-      }
-    }
-
 
     try {
       setIsTransactionPending(true);
@@ -142,16 +46,21 @@ export default function Home() {
       const paymasterInput = getGeneralPaymasterInput({
         innerInput: '0x',
       });
+      const publicClient = await primaryWallet?.connector.getPublicClient();
       const nonce = await publicClient.getTransactionCount({
-        address: account
+        address: primaryWallet?.address
       });
-      const hash: Hash = await walletClient.sendTransaction({
-        account,
+
+      const walletClient = await primaryWallet?.connector.getWalletClient();
+
+      const hash: Hash = await walletClient.extend(eip712WalletActions()).sendTransaction({
+        account: primaryWallet?.address,
         to: NFT_CONTRACT_ADDRESS,
+        chain: abstract,
         data: encodeFunctionData({
           abi: contractABI.abi,
           functionName: "mint",
-          args: [account, 1]
+          args: [primaryWallet?.address, 1]
         }),
         paymaster: PAYMASTER_ADDRESS,
         paymasterInput: paymasterInput,
@@ -168,45 +77,47 @@ export default function Home() {
     }
   };
 
-  return (
+return (
     <div style={styles.container}>
       <div style={styles.card}>
-      <h1 style={styles.title}>Abstract Sponsored Transaction Demo</h1>
-        {account ? (
-          <p style={styles.accountText}>Connected Account: {account}</p>
+        <h1 style={styles.title}>Abstract Sponsored Transaction Demo</h1>
+        {primaryWallet ? (
+            <p style={styles.accountText}>Connected Account: {primaryWallet.address}</p>
         ) : (
-          <p style={styles.accountText}>No account connected</p>
+            <p style={styles.accountText}>No account connected</p>
         )}
-        {!isCorrectNetwork && <p style={styles.warningText}>Please switch to the Abstract Testnet</p>}
-        <button 
-          style={
-            !isCorrectNetwork
-              ? styles.blueButton
-              : isTransactionPending
-              ? {...styles.button, ...styles.disabledButton}
-              : styles.button
-          } 
-          onClick={!isCorrectNetwork ? switchNetwork : handleClick}
-          disabled={isTransactionPending}
-        >
-          {!isCorrectNetwork
-            ? 'Change network to Abstract Testnet'
-            : isTransactionPending
-            ? 'Waiting...'
-            : 'Mint NFT'}
-        </button>
+        {
+          primaryWallet ? (
+              <button
+                  style={
+                    isTransactionPending
+                        ? {...styles.button, ...styles.disabledButton} as CSSProperties
+                        : styles.button as CSSProperties
+                  }
+                  onClick={handleClick}
+                  disabled={isTransactionPending || !primaryWallet}
+              >
+                {'Mint NFT'}
+              </button>
+          ) : (
+              <div style={{ width: '50%' }}>
+                <DynamicWidget />
+              </div>
+          )
+        }
+
         {transactionHash && (
-          <div style={styles.transactionInfo}>
-            <p style={styles.transactionText}>Minted with no gas fees!</p>
-            <a 
-              href={`https://explorer.testnet.abs.xyz/tx/${transactionHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={styles.link}
-            >
-              View on Explorer
-            </a>
-          </div>
+            <div style={styles.transactionInfo}>
+              <p style={styles.transactionText}>Minted with no gas fees!</p>
+              <a
+                  href={`https://explorer.testnet.abs.xyz/tx/${transactionHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={styles.link}
+              >
+                View on Explorer
+              </a>
+            </div>
         )}
       </div>
     </div>
